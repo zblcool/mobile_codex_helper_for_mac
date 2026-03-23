@@ -6,6 +6,7 @@ const JWT_SECRET = process.env.JWT_SECRET || appConfigDb.getOrCreateJwtSecret();
 const AUTH_COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'codex_auth';
 const TOKEN_LIFETIME = '7d';
 const AUTH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const ALLOW_QUERY_TOKEN_WS_FALLBACK = process.env.ALLOW_QUERY_TOKEN_WS_FALLBACK === 'true';
 
 const parseCookieHeader = (cookieHeader) => {
   if (!cookieHeader) {
@@ -228,7 +229,9 @@ const authenticateWebSocket = (token) => {
 };
 
 const authenticateWebSocketRequest = (req) =>
-  authenticateWebSocket(getAuthTokenFromRequest(req) || getQueryTokenFromRequest(req));
+  authenticateWebSocket(
+    getAuthTokenFromRequest(req) || (ALLOW_QUERY_TOKEN_WS_FALLBACK ? getQueryTokenFromRequest(req) : null),
+  );
 
 export {
   AUTH_COOKIE_NAME,

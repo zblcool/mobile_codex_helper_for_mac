@@ -3,6 +3,8 @@ import { useAuth } from '../components/auth/context/AuthContext';
 import { getStoredDeviceSession } from '../components/auth/deviceTrust.js';
 import { IS_PLATFORM } from '../constants/config';
 
+const ENABLE_QUERY_TOKEN_WS_FALLBACK = import.meta.env.VITE_ENABLE_QUERY_TOKEN_WS_FALLBACK === 'true';
+
 type WebSocketContextType = {
   ws: WebSocket | null;
   sendMessage: (message: any) => void;
@@ -24,7 +26,7 @@ const buildWebSocketUrl = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = new URL(`${protocol}//${window.location.host}/ws`);
   const deviceSession = getStoredDeviceSession();
-  if (deviceSession?.token) {
+  if (ENABLE_QUERY_TOKEN_WS_FALLBACK && deviceSession?.token) {
     url.searchParams.set('token', deviceSession.token);
   }
   if (IS_PLATFORM) return url.toString(); // Platform mode: Use same domain as the page (goes through proxy)
