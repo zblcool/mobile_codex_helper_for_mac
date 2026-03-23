@@ -25,7 +25,8 @@ cat > "${mobile_codex_caddy_config}" <<EOF
   admin off
 }
 
-http://127.0.0.1:${mobile_codex_proxy_port} {
+:${mobile_codex_proxy_port} {
+  bind 127.0.0.1
   encode zstd gzip
 
   header {

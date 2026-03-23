@@ -90,6 +90,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ summary, provider }),
     }),
+  setSessionStar: (sessionId, provider, starred) =>
+    authenticatedFetch(`/api/sessions/${sessionId}/star`, {
+      method: 'PUT',
+      body: JSON.stringify({ provider, starred }),
+    }),
   deleteCodexSession: (sessionId) =>
     authenticatedFetch(`/api/codex/sessions/${sessionId}`, {
       method: 'DELETE',

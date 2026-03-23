@@ -322,6 +322,22 @@ export function useSidebarController({
     });
   }, []);
 
+  const toggleStarSession = useCallback(
+    async (sessionId: string, provider: SessionProvider, starred: boolean) => {
+      try {
+        const response = await api.setSessionStar(sessionId, provider, starred);
+        if (!response.ok) {
+          console.error('[Sidebar] Failed to update session star:', response.status);
+          return;
+        }
+        await onRefresh();
+      } catch (error) {
+        console.error('[Sidebar] Error updating session star:', error);
+      }
+    },
+    [onRefresh],
+  );
+
   const isProjectStarred = useCallback(
     (projectName: string) => starredProjects.has(projectName),
     [starredProjects],
@@ -624,6 +640,7 @@ export function useSidebarController({
     toggleProject,
     handleSessionClick,
     toggleStarProject,
+    toggleStarSession,
     isProjectStarred,
     getProjectSessions,
     startEditing,

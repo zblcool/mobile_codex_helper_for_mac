@@ -80,6 +80,18 @@ export const getSessionTime = (session: SessionWithProvider): string => {
   return String(session.lastActivity || session.createdAt || '');
 };
 
+const compareSessions = (sessionA: SessionWithProvider, sessionB: SessionWithProvider): number => {
+  const aStarred = Boolean(sessionA.isStarred);
+  const bStarred = Boolean(sessionB.isStarred);
+  if (aStarred && !bStarred) {
+    return -1;
+  }
+  if (!aStarred && bStarred) {
+    return 1;
+  }
+  return getSessionDate(sessionB).getTime() - getSessionDate(sessionA).getTime();
+};
+
 export const createSessionViewModel = (
   session: SessionWithProvider,
   currentTime: Date,
@@ -109,7 +121,7 @@ export const getAllSessions = (
         ...session,
         __provider: 'codex' as const,
       }))
-      .sort((a, b) => getSessionDate(b).getTime() - getSessionDate(a).getTime());
+      .sort(compareSessions);
   }
 
   const claudeSessions = [
@@ -132,9 +144,7 @@ export const getAllSessions = (
     __provider: 'gemini' as const,
   }));
 
-  return [...claudeSessions, ...cursorSessions, ...codexSessions, ...geminiSessions].sort(
-    (a, b) => getSessionDate(b).getTime() - getSessionDate(a).getTime(),
-  );
+  return [...claudeSessions, ...cursorSessions, ...codexSessions, ...geminiSessions].sort(compareSessions);
 };
 
 export const getProjectLastActivity = (

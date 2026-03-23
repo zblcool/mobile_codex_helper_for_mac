@@ -75,6 +75,7 @@ function Sidebar({
     toggleProject,
     handleSessionClick,
     toggleStarProject,
+    toggleStarSession,
     isProjectStarred,
     getProjectSessions,
     startEditing,
@@ -157,6 +158,9 @@ function Sidebar({
     onToggleProject: toggleProject,
     onProjectSelect: handleProjectSelect,
     onToggleStarProject: toggleStarProject,
+    onToggleStarSession: (sessionId, provider, starred) => {
+      void toggleStarSession(sessionId, provider, starred);
+    },
     onStartEditingProject: startEditing,
     onCancelEditingProject: cancelEditing,
     onSaveProjectName: (projectName) => {

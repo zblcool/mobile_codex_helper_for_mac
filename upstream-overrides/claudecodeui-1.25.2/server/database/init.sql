@@ -64,6 +64,17 @@ CREATE TABLE IF NOT EXISTS session_names (
 
 CREATE INDEX IF NOT EXISTS idx_session_names_lookup ON session_names(session_id, provider);
 
+-- Session stars (provider-agnostic, server-side sync across devices)
+CREATE TABLE IF NOT EXISTS session_stars (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'claude',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(session_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_stars_lookup ON session_stars(session_id, provider);
+
 -- Approved devices (browser/app wrappers) that are allowed to log in for this single-user system
 CREATE TABLE IF NOT EXISTS trusted_devices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

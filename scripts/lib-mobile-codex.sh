@@ -48,7 +48,8 @@ mobile_codex_caddy_stderr_log="${mobile_codex_log_dir}/mobile-codex-caddy.stderr
 mobile_codex_caddy_access_log="${mobile_codex_caddy_root}/logs/mobile-codex.access.json"
 mobile_codex_app_stdout_log="${mobile_codex_log_dir}/mobile-codex-app.stdout.log"
 mobile_codex_app_stderr_log="${mobile_codex_log_dir}/mobile-codex-app.stderr.log"
-mobile_codex_remote_target="http://127.0.0.1:${mobile_codex_proxy_port}"
+mobile_codex_remote_state_file="${mobile_codex_runtime_dir}/mobile-codex-remote-state.json"
+mobile_codex_remote_target="http://127.0.0.1:${mobile_codex_app_port}"
 
 export mobile_codex_workspace_root
 export mobile_codex_runtime_dir
@@ -66,6 +67,7 @@ export mobile_codex_caddy_stderr_log
 export mobile_codex_caddy_access_log
 export mobile_codex_app_stdout_log
 export mobile_codex_app_stderr_log
+export mobile_codex_remote_state_file
 export mobile_codex_remote_target
 
 mobile_codex_require_command() {

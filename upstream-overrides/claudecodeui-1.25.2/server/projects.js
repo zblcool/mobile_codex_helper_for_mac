@@ -66,7 +66,7 @@ import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import os from 'os';
 import sessionManager from './sessionManager.js';
-import { applyCustomSessionNames } from './database/db.js';
+import { applyCustomSessionNames, applySessionStars } from './database/db.js';
 
 const CODEX_ONLY_HARDENED_MODE = process.env.CODEX_ONLY_HARDENED_MODE !== 'false';
 
@@ -364,6 +364,9 @@ async function getCodexOnlyProjects(progressCallback, config, codexSessionsIndex
 
     const customName = matchedMetadata?.displayName || '';
     const displayName = customName || await generateDisplayName(projectName, actualProjectDir);
+    const codexProjectSessions = [...sessions];
+    applyCustomSessionNames(codexProjectSessions, 'codex');
+    applySessionStars(codexProjectSessions, 'codex');
 
     projects.push({
       name: projectName,
@@ -374,7 +377,7 @@ async function getCodexOnlyProjects(progressCallback, config, codexSessionsIndex
       isManuallyAdded: Boolean(matchedMetadata?.isManuallyAdded),
       sessions: [],
       cursorSessions: [],
-      codexSessions: [...sessions],
+      codexSessions: codexProjectSessions,
       geminiSessions: [],
       sessionMeta: {
         hasMore: false,
@@ -671,6 +674,7 @@ async function getProjects(progressCallback = null) {
         };
       }
       applyCustomSessionNames(project.sessions, 'claude');
+      applySessionStars(project.sessions, 'claude');
 
       // Also fetch Cursor sessions for this project
       try {
@@ -680,6 +684,7 @@ async function getProjects(progressCallback = null) {
         project.cursorSessions = [];
       }
       applyCustomSessionNames(project.cursorSessions, 'cursor');
+      applySessionStars(project.cursorSessions, 'cursor');
 
       // Also fetch Codex sessions for this project
       try {
@@ -691,6 +696,7 @@ async function getProjects(progressCallback = null) {
         project.codexSessions = [];
       }
       applyCustomSessionNames(project.codexSessions, 'codex');
+      applySessionStars(project.codexSessions, 'codex');
 
       // Also fetch Gemini sessions for this project (UI + CLI)
       try {
@@ -704,6 +710,7 @@ async function getProjects(progressCallback = null) {
         project.geminiSessions = [];
       }
       applyCustomSessionNames(project.geminiSessions, 'gemini');
+      applySessionStars(project.geminiSessions, 'gemini');
 
       // Add TaskMaster detection
       try {
@@ -788,6 +795,7 @@ async function getProjects(progressCallback = null) {
         console.warn(`Could not load Cursor sessions for manual project ${projectName}:`, e.message);
       }
       applyCustomSessionNames(project.cursorSessions, 'cursor');
+      applySessionStars(project.cursorSessions, 'cursor');
 
       // Try to fetch Codex sessions for manual projects too
       try {
@@ -798,6 +806,7 @@ async function getProjects(progressCallback = null) {
         console.warn(`Could not load Codex sessions for manual project ${projectName}:`, e.message);
       }
       applyCustomSessionNames(project.codexSessions, 'codex');
+      applySessionStars(project.codexSessions, 'codex');
 
       // Try to fetch Gemini sessions for manual projects too (UI + CLI)
       try {
@@ -809,6 +818,7 @@ async function getProjects(progressCallback = null) {
         console.warn(`Could not load Gemini sessions for manual project ${projectName}:`, e.message);
       }
       applyCustomSessionNames(project.geminiSessions, 'gemini');
+      applySessionStars(project.geminiSessions, 'gemini');
 
       // Add TaskMaster detection for manual projects
       try {

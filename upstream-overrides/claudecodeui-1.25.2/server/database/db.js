@@ -118,6 +118,14 @@ const runMigrations = () => {
       UNIQUE(session_id, provider)
     )`);
     db.exec('CREATE INDEX IF NOT EXISTS idx_session_names_lookup ON session_names(session_id, provider)');
+    db.exec(`CREATE TABLE IF NOT EXISTS session_stars (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'claude',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(session_id, provider)
+    )`);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_session_stars_lookup ON session_stars(session_id, provider)');
 
     db.exec(`CREATE TABLE IF NOT EXISTS trusted_devices (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -658,6 +666,46 @@ const sessionNamesDb = {
   },
 };
 
+const sessionStarsDb = {
+  setStarred: (sessionId, provider, starred = true) => {
+    if (starred) {
+      db.prepare(`
+        INSERT INTO session_stars (session_id, provider)
+        VALUES (?, ?)
+        ON CONFLICT(session_id, provider) DO NOTHING
+      `).run(sessionId, provider);
+      return true;
+    }
+
+    return db.prepare(
+      'DELETE FROM session_stars WHERE session_id = ? AND provider = ?'
+    ).run(sessionId, provider).changes > 0;
+  },
+
+  isStarred: (sessionId, provider) => {
+    const row = db.prepare(
+      'SELECT 1 FROM session_stars WHERE session_id = ? AND provider = ?'
+    ).get(sessionId, provider);
+    return Boolean(row);
+  },
+
+  getStarredIds: (sessionIds, provider) => {
+    if (!sessionIds.length) return new Set();
+    const placeholders = sessionIds.map(() => '?').join(',');
+    const rows = db.prepare(
+      `SELECT session_id FROM session_stars
+       WHERE session_id IN (${placeholders}) AND provider = ?`
+    ).all(...sessionIds, provider);
+    return new Set(rows.map((row) => row.session_id));
+  },
+
+  deleteStar: (sessionId, provider) => {
+    return db.prepare(
+      'DELETE FROM session_stars WHERE session_id = ? AND provider = ?'
+    ).run(sessionId, provider).changes > 0;
+  },
+};
+
 // Apply custom session names from the database (overrides CLI-generated summaries)
 function applyCustomSessionNames(sessions, provider) {
   if (!sessions?.length) return;
@@ -670,6 +718,19 @@ function applyCustomSessionNames(sessions, provider) {
     }
   } catch (error) {
     console.warn(`[DB] Failed to apply custom session names for ${provider}:`, error.message);
+  }
+}
+
+function applySessionStars(sessions, provider) {
+  if (!sessions?.length) return;
+  try {
+    const ids = sessions.map((session) => session.id);
+    const starredIds = sessionStarsDb.getStarredIds(ids, provider);
+    for (const session of sessions) {
+      session.isStarred = starredIds.has(session.id);
+    }
+  } catch (error) {
+    console.warn(`[DB] Failed to apply session stars for ${provider}:`, error.message);
   }
 }
 
@@ -727,7 +788,9 @@ export {
   credentialsDb,
   trustedDevicesDb,
   sessionNamesDb,
+  sessionStarsDb,
   applyCustomSessionNames,
+  applySessionStars,
   appConfigDb,
   githubTokensDb // Backward compatibility
 };

@@ -26,4 +26,6 @@ if [[ -n "${tailscale_bin}" ]]; then
   "${tailscale_bin}" serve reset >/dev/null 2>&1 || true
 fi
 
+rm -f "${mobile_codex_remote_state_file}"
+
 echo "Stopped Mobile Codex stack"

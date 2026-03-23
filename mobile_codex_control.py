@@ -115,6 +115,7 @@ PROXY_ERROR_LOG = (
     if IS_WINDOWS
     else WORKSPACE / "tmp" / "logs" / "mobile-codex-caddy.stderr.log"
 )
+REMOTE_STATE_PATH = RUNTIME_DIR / "mobile-codex-remote-state.json"
 
 
 def inspect_auth_db(path: Path) -> tuple[int, set[str]]:
@@ -528,10 +529,16 @@ def load_tailscale_status() -> dict[str, Any]:
     if not TAILSCALE.exists():
         return {"ok": False, "error": f"Tailscale CLI 未找到：{TAILSCALE}"}
     result = run_command([str(TAILSCALE), "status", "--json"])
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
     if result.returncode != 0:
-        return {"ok": False, "error": result.stderr.strip() or result.stdout.strip() or "读取 Tailscale 状态失败"}
+        return {"ok": False, "error": stderr or stdout or "读取 Tailscale 状态失败"}
+    if not stdout:
+        return {"ok": False, "error": stderr or "Tailscale 未返回状态内容"}
+    if not stdout.startswith("{"):
+        return {"ok": False, "error": stderr or stdout}
     try:
-        return {"ok": True, "data": json.loads(result.stdout)}
+        return {"ok": True, "data": json.loads(stdout)}
     except json.JSONDecodeError as exc:
         return {"ok": False, "error": f"Tailscale 返回的 JSON 无法解析: {exc}"}
 
@@ -540,18 +547,51 @@ def load_serve_status() -> dict[str, Any]:
     if not TAILSCALE.exists():
         return {"ok": False, "error": f"Tailscale CLI 未找到：{TAILSCALE}"}
     result = run_command([str(TAILSCALE), "serve", "status", "--json"])
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
     if result.returncode != 0:
-        return {"ok": False, "error": result.stderr.strip() or result.stdout.strip() or "读取远程发布状态失败"}
+        return {"ok": False, "error": stderr or stdout or "读取远程发布状态失败"}
+    if not stdout:
+        return {"ok": False, "error": stderr or "远程发布未返回状态内容"}
+    if not stdout.startswith("{"):
+        return {"ok": False, "error": stderr or stdout}
     try:
-        return {"ok": True, "data": json.loads(result.stdout)}
+        return {"ok": True, "data": json.loads(stdout)}
     except json.JSONDecodeError as exc:
         return {"ok": False, "error": f"远程发布状态 JSON 无法解析: {exc}"}
 
 
-def build_remote_status(tailscale_status: dict[str, Any], serve_status: dict[str, Any]) -> dict[str, Any]:
+def load_cached_remote_state() -> dict[str, Any] | None:
+    if not REMOTE_STATE_PATH.exists():
+        return None
+    try:
+        return json.loads(REMOTE_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def build_remote_status(
+    tailscale_status: dict[str, Any],
+    serve_status: dict[str, Any],
+    cached_remote_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     serve_data = serve_status.get("data") if serve_status.get("ok") else {}
     web_entries = list((serve_data or {}).get("Web", {}).items())
     if not web_entries:
+        if cached_remote_state and cached_remote_state.get("published"):
+            url = cached_remote_state.get("url")
+            health_ok = False
+            health_detail = "未执行远程健康检查"
+            if url:
+                health_ok, health_detail = http_health(f"{url}/health", timeout=2.5)
+            return {
+                "published": True,
+                "url": url,
+                "target": cached_remote_state.get("target"),
+                "detail": "使用最近一次保存的远程发布状态",
+                "health_ok": health_ok,
+                "health_detail": health_detail,
+            }
         return {
             "published": False,
             "url": None,
@@ -875,9 +915,10 @@ def collect_status() -> dict[str, Any]:
     proxy_ok, proxy_health_detail = http_health(PROXY_HEALTH_URL)
     app_detail = describe_service(app_ok, app_health_detail, app_listener)
     proxy_detail = describe_service(proxy_ok, proxy_health_detail, proxy_listener)
+    cached_remote_state = load_cached_remote_state()
     tailscale_status = load_tailscale_status()
     serve_status = load_serve_status()
-    remote = build_remote_status(tailscale_status, serve_status)
+    remote = build_remote_status(tailscale_status, serve_status, cached_remote_state)
     peers = extract_mobile_peers(tailscale_status)
     approved_devices = list_approved_devices()
     pending_approvals = list_pending_device_approvals()
@@ -971,9 +1012,10 @@ def stack_is_running() -> bool:
 
 
 def remote_publish_is_enabled() -> bool:
+    cached_remote_state = load_cached_remote_state()
     tailscale_status = load_tailscale_status()
     serve_status = load_serve_status()
-    remote = build_remote_status(tailscale_status, serve_status)
+    remote = build_remote_status(tailscale_status, serve_status, cached_remote_state)
     return bool(remote["published"])
 
 
@@ -1020,7 +1062,7 @@ def perform_action(action: str) -> str:
         return "整套服务已停止"
 
     if action == "enable_remote":
-        result = run_command([str(TAILSCALE), "serve", "--bg", REMOTE_TARGET], timeout=20)
+        result = run_workspace_script("enable-mobile-codex-remote", timeout=30)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "开启远程发布失败")
         if not wait_for(remote_publish_is_enabled, timeout=12, interval=1.0):
@@ -1033,6 +1075,10 @@ def perform_action(action: str) -> str:
         result = run_command([str(TAILSCALE), "serve", "reset"], timeout=10)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "关闭远程发布失败")
+        try:
+            REMOTE_STATE_PATH.unlink()
+        except FileNotFoundError:
+            pass
         if not wait_for(lambda: not remote_publish_is_enabled(), timeout=8, interval=0.8):
             raise RuntimeError("远程发布关闭命令已执行，但 Serve 状态仍存在")
         return "远程发布已关闭"

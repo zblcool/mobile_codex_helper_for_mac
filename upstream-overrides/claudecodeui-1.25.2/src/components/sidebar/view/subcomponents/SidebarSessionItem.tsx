@@ -1,4 +1,4 @@
-import { Check, Clock, Edit2, Trash2, X } from 'lucide-react';
+import { Check, Clock, Edit2, Star, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 import { Badge, Button } from '../../../../shared/view/ui';
 import { cn } from '../../../../lib/utils';
@@ -22,6 +22,7 @@ type SidebarSessionItemProps = {
   onSaveEditingSession: (projectName: string, sessionId: string, summary: string, provider: SessionProvider) => void;
   onProjectSelect: (project: Project) => void;
   onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
+  onToggleStarSession: (sessionId: string, provider: SessionProvider, starred: boolean) => void;
   onDeleteSession: (
     projectName: string,
     sessionId: string,
@@ -44,11 +45,13 @@ export default function SidebarSessionItem({
   onSaveEditingSession,
   onProjectSelect,
   onSessionSelect,
+  onToggleStarSession,
   onDeleteSession,
   t,
 }: SidebarSessionItemProps) {
   const sessionView = createSessionViewModel(session, currentTime, t);
   const isSelected = selectedSession?.id === session.id;
+  const isStarred = Boolean(session.isStarred);
 
   const selectMobileSession = () => {
     onProjectSelect(project);
@@ -61,6 +64,10 @@ export default function SidebarSessionItem({
 
   const requestDeleteSession = () => {
     onDeleteSession(project.name, session.id, sessionView.sessionName, session.__provider);
+  };
+
+  const toggleSessionStar = () => {
+    onToggleStarSession(session.id, session.__provider, !isStarred);
   };
 
   return (
@@ -93,7 +100,10 @@ export default function SidebarSessionItem({
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium text-foreground">{sessionView.sessionName}</div>
+              <div className="flex items-center gap-1">
+                <div className="truncate text-xs font-medium text-foreground">{sessionView.sessionName}</div>
+                {isStarred && <Star className="h-3 w-3 flex-shrink-0 fill-current text-yellow-500" />}
+              </div>
               <div className="mt-0.5 flex items-center gap-1">
                 <Clock className="h-2.5 w-2.5 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">
@@ -110,17 +120,37 @@ export default function SidebarSessionItem({
               </div>
             </div>
 
-            {!IS_CODEX_ONLY_HARDENED && !sessionView.isCursorSession && (
+            <div className="ml-1 flex items-center gap-1">
               <button
-                className="ml-1 flex h-5 w-5 items-center justify-center rounded-md bg-red-50 opacity-70 transition-transform active:scale-95 dark:bg-red-900/20"
+                className={cn(
+                  'flex h-5 w-5 items-center justify-center rounded-md transition-transform active:scale-95',
+                  isStarred ? 'bg-yellow-50 dark:bg-yellow-900/20' : 'bg-gray-50 dark:bg-gray-900/20',
+                )}
                 onClick={(event) => {
                   event.stopPropagation();
-                  requestDeleteSession();
+                  toggleSessionStar();
                 }}
+                title={isStarred ? t('tooltips.removeFromFavorites') : t('tooltips.addToFavorites')}
               >
-                <Trash2 className="h-2.5 w-2.5 text-red-600 dark:text-red-400" />
+                <Star
+                  className={cn(
+                    'h-2.5 w-2.5',
+                    isStarred ? 'fill-current text-yellow-600 dark:text-yellow-400' : 'text-gray-600 dark:text-gray-400',
+                  )}
+                />
               </button>
-            )}
+              {!IS_CODEX_ONLY_HARDENED && !sessionView.isCursorSession && (
+                <button
+                  className="flex h-5 w-5 items-center justify-center rounded-md bg-red-50 opacity-70 transition-transform active:scale-95 dark:bg-red-900/20"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    requestDeleteSession();
+                  }}
+                >
+                  <Trash2 className="h-2.5 w-2.5 text-red-600 dark:text-red-400" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -137,7 +167,10 @@ export default function SidebarSessionItem({
           <div className="flex w-full min-w-0 items-start gap-2">
             <SessionProviderLogo provider={session.__provider} className="mt-0.5 h-3 w-3 flex-shrink-0" />
             <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium text-foreground">{sessionView.sessionName}</div>
+              <div className="flex items-center gap-1">
+                <div className="truncate text-xs font-medium text-foreground">{sessionView.sessionName}</div>
+                {isStarred && <Star className="h-3 w-3 flex-shrink-0 fill-current text-yellow-500" />}
+              </div>
               <div className="mt-0.5 flex items-center gap-1">
                 <Clock className="h-2.5 w-2.5 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">
@@ -199,32 +232,54 @@ export default function SidebarSessionItem({
                   <X className="h-3 w-3 text-gray-600 dark:text-gray-400" />
                 </button>
               </>
-            ) : !IS_CODEX_ONLY_HARDENED ? (
+            ) : (
               <>
                 <button
-                  className="flex h-6 w-6 items-center justify-center rounded bg-gray-50 hover:bg-gray-100 dark:bg-gray-900/20 dark:hover:bg-gray-900/40"
+                  className={cn(
+                    'flex h-6 w-6 items-center justify-center rounded hover:bg-yellow-100 dark:hover:bg-yellow-900/40',
+                    isStarred ? 'bg-yellow-50 dark:bg-yellow-900/20' : 'bg-gray-50 dark:bg-gray-900/20',
+                  )}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onStartEditingSession(session.id, sessionView.sessionName);
+                    toggleSessionStar();
                   }}
-                  title={t('tooltips.editSessionName')}
+                  title={isStarred ? t('tooltips.removeFromFavorites') : t('tooltips.addToFavorites')}
                 >
-                  <Edit2 className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                  <Star
+                    className={cn(
+                      'h-3 w-3',
+                      isStarred ? 'fill-current text-yellow-600 dark:text-yellow-400' : 'text-gray-600 dark:text-gray-400',
+                    )}
+                  />
                 </button>
-                {!sessionView.isCursorSession && (
-                  <button
-                    className="flex h-6 w-6 items-center justify-center rounded bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      requestDeleteSession();
-                    }}
-                    title={t('tooltips.deleteSession')}
-                  >
-                    <Trash2 className="h-3 w-3 text-red-600 dark:text-red-400" />
-                  </button>
+                {!IS_CODEX_ONLY_HARDENED && (
+                  <>
+                    <button
+                      className="flex h-6 w-6 items-center justify-center rounded bg-gray-50 hover:bg-gray-100 dark:bg-gray-900/20 dark:hover:bg-gray-900/40"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onStartEditingSession(session.id, sessionView.sessionName);
+                      }}
+                      title={t('tooltips.editSessionName')}
+                    >
+                      <Edit2 className="h-3 w-3 text-gray-600 dark:text-gray-400" />
+                    </button>
+                    {!sessionView.isCursorSession && (
+                      <button
+                        className="flex h-6 w-6 items-center justify-center rounded bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          requestDeleteSession();
+                        }}
+                        title={t('tooltips.deleteSession')}
+                      >
+                        <Trash2 className="h-3 w-3 text-red-600 dark:text-red-400" />
+                      </button>
+                    )}
+                  </>
                 )}
               </>
-            ) : null}
+            )}
           </div>
       </div>
     </div>
