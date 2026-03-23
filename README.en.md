@@ -4,6 +4,14 @@
 
 Turn the Codex sessions running on your computer into a private, phone-friendly web control panel.
 
+## macOS Version
+
+This workspace now includes a macOS-friendly deployment path.
+
+If you want to run it on a Mac, start here:
+
+- [macOS deployment guide](docs/MACOS.zh-CN.md)
+
 This project is built for a simple use case:
 
 - Codex runs locally on your PC

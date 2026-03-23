@@ -71,6 +71,7 @@ import { validateApiKey, authenticateToken, authenticateWebSocketRequest } from 
 import { IS_PLATFORM } from './constants/config.js';
 
 const CODEX_ONLY_HARDENED_MODE = process.env.CODEX_ONLY_HARDENED_MODE !== 'false';
+const DISABLE_PROJECT_WATCHERS = process.env.DISABLE_PROJECT_WATCHERS === 'true';
 const VALID_PROVIDERS = CODEX_ONLY_HARDENED_MODE ? ['codex'] : ['claude', 'codex', 'cursor', 'gemini'];
 
 // File system watchers for provider project/session folders
@@ -2650,8 +2651,12 @@ async function startServer() {
             console.log(`${c.tip('[TIP]')}  Run "cloudcli status" for full configuration details`);
             console.log('');
 
-            // Start watching the projects folder for changes
-            await setupProjectsWatcher();
+            // Allow constrained environments to skip file watchers and rely on manual refresh.
+            if (DISABLE_PROJECT_WATCHERS) {
+                console.log(`${c.warn('[WARN]')} Project file watchers are disabled by environment`);
+            } else {
+                await setupProjectsWatcher();
+            }
 
             if (!CODEX_ONLY_HARDENED_MODE) {
                 // Start server-side plugin processes for enabled plugins

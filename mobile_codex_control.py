@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -25,14 +26,17 @@ except ImportError:  # pragma: no cover
     tk = None
     
 
+IS_WINDOWS = sys.platform == "win32"
 APP_TITLE = "移动 Codex 控制台"
-APP_PORT = 3001
-PROXY_PORT = 8080
+APP_PORT = int(os.environ.get("MOBILE_CODEX_APP_PORT", "3001"))
+PROXY_PORT = int(os.environ.get("MOBILE_CODEX_PROXY_PORT", "8080"))
 PHONE_ACTIVITY_WINDOW_MINUTES = 10
 LOCAL_PANEL_URL = f"http://127.0.0.1:{APP_PORT}"
 APP_HEALTH_URL = f"{LOCAL_PANEL_URL}/health"
 PROXY_HEALTH_URL = f"http://127.0.0.1:{PROXY_PORT}/health"
 REMOTE_TARGET = f"http://127.0.0.1:{PROXY_PORT}"
+PROXY_LABEL = "nginx 代理" if IS_WINDOWS else "Caddy 代理"
+PROXY_LOG_LABEL = "nginx" if IS_WINDOWS else "caddy"
 
 
 def resolve_workspace() -> Path:
@@ -47,6 +51,8 @@ def resolve_workspace() -> Path:
     for candidate in candidates:
         if (candidate / "scripts" / "start-mobile-codex-stack.ps1").exists():
             return candidate
+        if (candidate / "scripts" / "start-mobile-codex-stack.sh").exists():
+            return candidate
 
     return Path(__file__).resolve().parent
 
@@ -54,6 +60,7 @@ def resolve_workspace() -> Path:
 WORKSPACE = resolve_workspace()
 SCRIPTS_DIR = WORKSPACE / "scripts"
 APP_STDERR_LOG = WORKSPACE / "tmp" / "logs" / "mobile-codex-app.stderr.log"
+RUNTIME_DIR = WORKSPACE / ".runtime"
 MOBILE_USER_AGENT = re.compile(r"android|iphone|ipad|mobile|ios|harmony", re.IGNORECASE)
 MOBILE_OS = {"android", "ios"}
 NGINX_MONTHS = {
@@ -76,7 +83,15 @@ def resolve_tailscale_path() -> Path:
     configured = os.environ.get("MOBILE_CODEX_TAILSCALE")
     if configured:
         return Path(configured)
-    return Path(r"C:\Program Files\Tailscale\tailscale.exe")
+
+    detected = shutil.which("tailscale")
+    if detected:
+        return Path(detected)
+
+    if IS_WINDOWS:
+        return Path(r"C:\Program Files\Tailscale\tailscale.exe")
+
+    return Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
 
 
 def resolve_ascii_alias_path() -> Path:
@@ -90,8 +105,16 @@ def resolve_ascii_alias_path() -> Path:
 
 ASCII_ALIAS_PATH = resolve_ascii_alias_path()
 TAILSCALE = resolve_tailscale_path()
-NGINX_ACCESS_LOG = ASCII_ALIAS_PATH / ".runtime" / "nginx" / "logs" / "mobile-codex.access.log"
-NGINX_ERROR_LOG = ASCII_ALIAS_PATH / ".runtime" / "nginx" / "logs" / "mobile-codex.error.log"
+PROXY_ACCESS_LOG = (
+    ASCII_ALIAS_PATH / ".runtime" / "nginx" / "logs" / "mobile-codex.access.log"
+    if IS_WINDOWS
+    else RUNTIME_DIR / "caddy" / "logs" / "mobile-codex.access.json"
+)
+PROXY_ERROR_LOG = (
+    ASCII_ALIAS_PATH / ".runtime" / "nginx" / "logs" / "mobile-codex.error.log"
+    if IS_WINDOWS
+    else WORKSPACE / "tmp" / "logs" / "mobile-codex-caddy.stderr.log"
+)
 
 
 def inspect_auth_db(path: Path) -> tuple[int, set[str]]:
@@ -246,7 +269,8 @@ def is_recent(value: str | None, minutes: int = PHONE_ACTIVITY_WINDOW_MINUTES) -
 
 
 def summarize_connection_error(message: str) -> str:
-    if "10061" in message:
+    lowered = message.lower()
+    if "10061" in message or "connection refused" in lowered or "errno 61" in lowered:
         return "端口未监听，服务未启动"
     return message
 
@@ -284,6 +308,28 @@ def wait_for(predicate: Callable[[], bool], timeout: float, interval: float = 1.
             return True
         time.sleep(interval)
     return predicate()
+
+
+def workspace_script_name(base_name: str) -> str:
+    return f"{base_name}.ps1" if IS_WINDOWS else f"{base_name}.sh"
+
+
+def run_workspace_script(base_name: str, timeout: int = 60) -> subprocess.CompletedProcess[str]:
+    script_path = SCRIPTS_DIR / workspace_script_name(base_name)
+    if IS_WINDOWS:
+        return run_command(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+            ],
+            timeout=timeout,
+        )
+
+    return run_command(["/bin/bash", str(script_path)], timeout=timeout)
 
 
 def powershell_file(script_name: str, timeout: int = 60) -> subprocess.CompletedProcess[str]:
@@ -372,8 +418,11 @@ def parse_nginx_timestamp(value: str) -> str | None:
 
 def get_listener_map(ports: list[int] | None = None) -> dict[int, ListenerInfo]:
     target_ports = ports or [APP_PORT, PROXY_PORT]
-    ports_literal = ",".join(str(port) for port in target_ports)
-    command = f"""
+    listener_map: dict[int, ListenerInfo] = {}
+
+    if IS_WINDOWS:
+        ports_literal = ",".join(str(port) for port in target_ports)
+        command = f"""
 $ports = @({ports_literal})
 $listeners = foreach ($item in Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {{ $ports -contains $_.LocalPort }}) {{
     $proc = Get-Process -Id $item.OwningProcess -ErrorAction SilentlyContinue
@@ -388,23 +437,45 @@ if ($listeners) {{
     $listeners | ConvertTo-Json -Compress
 }}
 """
-    data = run_powershell_json(command)
-    if not data:
-        return {}
-    items = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
+        data = run_powershell_json(command)
+        if not data:
+            return {}
+        items = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
+        for item in items:
+            try:
+                port = int(item.get("port"))
+                listener_map[port] = ListenerInfo(
+                    port=port,
+                    pid=int(item.get("pid")),
+                    name=str(item.get("name") or ""),
+                    path=str(item.get("path") or ""),
+                )
+            except (TypeError, ValueError):
+                continue
+        return listener_map
 
-    listener_map: dict[int, ListenerInfo] = {}
-    for item in items:
-        try:
-            port = int(item.get("port"))
-            listener_map[port] = ListenerInfo(
-                port=port,
-                pid=int(item.get("pid")),
-                name=str(item.get("name") or ""),
-                path=str(item.get("path") or ""),
-            )
-        except (TypeError, ValueError):
+    for port in target_ports:
+        result = run_command(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpcn"], timeout=6)
+        if result.returncode not in (0, 1):
             continue
+
+        pid: int | None = None
+        name = ""
+        for raw_line in result.stdout.splitlines():
+            if not raw_line:
+                continue
+            prefix, value = raw_line[0], raw_line[1:]
+            if prefix == "p":
+                try:
+                    pid = int(value)
+                except ValueError:
+                    pid = None
+            elif prefix == "c":
+                name = value
+            elif prefix == "n" and pid is not None:
+                listener_map[port] = ListenerInfo(port=port, pid=pid, name=name, path="")
+                break
+
     return listener_map
 
 
@@ -427,7 +498,7 @@ def normalize_remote_health_detail(detail: str) -> str:
     lowered = detail.lower()
     if "handshake operation timed out" in lowered or "timed out" in lowered:
         return "本机自检超时，手机端可能仍可访问"
-    if "10061" in detail:
+    if "10061" in detail or "connection refused" in lowered or "errno 61" in lowered:
         return "远程入口未监听"
     return f"本机自检失败：{detail}"
 
@@ -562,29 +633,59 @@ def tail_lines(file_path: Path, max_lines: int = 200) -> list[str]:
     return list(lines)
 
 
+def tail_latest_run_lines(file_path: Path, max_lines: int = 200) -> list[str]:
+    lines = tail_lines(file_path, max_lines=max_lines)
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].startswith("==== START "):
+            return lines[index + 1 :]
+    return lines
+
+
 def recent_mobile_requests(limit: int = 6) -> list[dict[str, Any]]:
     pattern = re.compile(
         r'^(?P<ip>\S+) - \S+ \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) [^"]+" '
         r'(?P<status>\d{3}) (?P<bytes>\d+) "(?P<referrer>[^"]*)" "(?P<ua>.*)"$'
     )
     parsed: list[dict[str, Any]] = []
-    for line in tail_lines(NGINX_ACCESS_LOG):
+    for line in tail_lines(PROXY_ACCESS_LOG):
+        item: dict[str, Any] | None = None
         match = pattern.match(line)
-        if not match:
-            continue
-        user_agent = match.group("ua")
-        if not MOBILE_USER_AGENT.search(user_agent):
-            continue
-        parsed.append(
-            {
+        if match:
+            item = {
                 "ip": match.group("ip"),
                 "time": parse_nginx_timestamp(match.group("time")) or match.group("time"),
                 "method": match.group("method"),
-                "path": match.group("path"),
+                "path": match.group("path").split("?", 1)[0],
                 "status": int(match.group("status")),
-                "user_agent": user_agent,
+                "user_agent": match.group("ua"),
             }
-        )
+        elif line.lstrip().startswith("{"):
+            try:
+                payload = json.loads(line)
+                request = payload.get("request") or {}
+                headers = request.get("headers") or {}
+                user_agent_raw = headers.get("User-Agent") or headers.get("user-agent") or [""]
+                if isinstance(user_agent_raw, list):
+                    user_agent = str(user_agent_raw[0] if user_agent_raw else "")
+                else:
+                    user_agent = str(user_agent_raw)
+                timestamp = payload.get("ts")
+                item = {
+                    "ip": str(payload.get("request", {}).get("remote_ip") or ""),
+                    "time": datetime.fromtimestamp(float(timestamp)).astimezone().isoformat() if timestamp else None,
+                    "method": str(request.get("method") or ""),
+                    "path": str(request.get("uri") or "").split("?", 1)[0],
+                    "status": int(payload.get("status") or 0),
+                    "user_agent": user_agent,
+                }
+            except (ValueError, TypeError, json.JSONDecodeError):
+                item = None
+
+        if not item:
+            continue
+        if not MOBILE_USER_AGENT.search(item["user_agent"]):
+            continue
+        parsed.append(item)
     parsed.sort(key=lambda item: str(item["time"]), reverse=True)
 
     unique: list[dict[str, Any]] = []
@@ -602,8 +703,8 @@ def recent_mobile_requests(limit: int = 6) -> list[dict[str, Any]]:
 
 def tail_error_lines(limit: int = 8) -> list[str]:
     combined = []
-    for label, path in (("后端", APP_STDERR_LOG), ("nginx", NGINX_ERROR_LOG)):
-        lines = tail_lines(path, max_lines=40)
+    for label, path in (("后端", APP_STDERR_LOG), (PROXY_LOG_LABEL, PROXY_ERROR_LOG)):
+        lines = tail_latest_run_lines(path, max_lines=80)
         interesting = [line for line in lines if re.search(r"error|warn|fail|502|trace|deprecat", line, re.I)]
         if interesting:
             combined.extend([f"[{label}] {line}" for line in interesting[-4:]])
@@ -802,7 +903,7 @@ def collect_status() -> dict[str, Any]:
 
     blocks = [
         StatusBlock("PC 应用服务", app_ok, "运行中" if app_ok else "未启动", app_detail, "success" if app_ok else "error"),
-        StatusBlock("nginx 代理", proxy_ok, "运行中" if proxy_ok else "未启动", proxy_detail, "success" if proxy_ok else "error"),
+        StatusBlock(PROXY_LABEL, proxy_ok, "运行中" if proxy_ok else "未启动", proxy_detail, "success" if proxy_ok else "error"),
         StatusBlock(
             "Tailscale",
             bool(tailscale_status.get("ok") and backend_state == "Running"),
@@ -839,7 +940,7 @@ def collect_status() -> dict[str, Any]:
         "diagnostics": [f"[本地] 认证数据库：{AUTH_DB_PATH}"] + tail_error_lines(),
         "summary": {
             "app_running": app_ok,
-            "nginx_running": proxy_ok,
+            "proxy_running": proxy_ok,
             "tailscale_running": bool(tailscale_status.get("ok") and backend_state == "Running"),
             "remote_enabled": remote["published"],
             "remote_reachable": remote["health_ok"],
@@ -894,7 +995,7 @@ def wait_for_remote_reachable(timeout: float = 8.0) -> bool:
 
 def perform_action(action: str) -> str:
     if action == "start":
-        result = powershell_file("start-mobile-codex-stack.ps1", timeout=30)
+        result = run_workspace_script("start-mobile-codex-stack", timeout=30)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "启动整套服务失败")
         if not wait_for(stack_is_running, timeout=20, interval=1.5):
@@ -904,13 +1005,13 @@ def perform_action(action: str) -> str:
         return "整套服务已启动"
 
     if action == "stop":
-        result = powershell_file("stop-mobile-codex-stack.ps1", timeout=20)
+        result = run_workspace_script("stop-mobile-codex-stack", timeout=20)
         if TAILSCALE.exists():
             run_command([str(TAILSCALE), "serve", "reset"], timeout=10)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "停止整套服务失败")
         if not wait_for(stack_is_stopped, timeout=15, interval=1.0):
-            powershell_file("stop-mobile-codex-stack.ps1", timeout=20)
+            run_workspace_script("stop-mobile-codex-stack", timeout=20)
             if not wait_for(stack_is_stopped, timeout=10, interval=1.0):
                 listeners = get_listener_map()
                 remaining = [listeners.get(port) for port in (APP_PORT, PROXY_PORT) if listeners.get(port)]
