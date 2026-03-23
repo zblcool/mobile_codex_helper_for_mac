@@ -1,6 +1,8 @@
 # macOS 部署指南
 
-这份指南对应当前仓库里的 macOS 版本。
+这份指南对应当前 fork 里的 macOS 版本。
+
+这个 fork 基于原始项目 [StarsTom/mobileCodexHelper](https://github.com/StarsTom/mobileCodexHelper)，保留了它原本的手机控制面板、设备审批和私网优先思路，并在此基础上补上了 macOS 的运行链路。
 
 它保留了参考项目最核心的能力：
 
@@ -87,7 +89,7 @@ python3 mobile_codex_control.py --json
 用桌面浏览器打开：
 
 ```text
-http://127.0.0.1:3001
+http://127.0.0.1:8080
 ```
 
 完成账号注册。第一台注册设备会自动加入白名单。
